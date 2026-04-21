@@ -1,0 +1,145 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'Apple SD Gothic Neo', sans-serif; background: #fff; color: #222; }
+
+header {
+    padding: 20px 30px 10px;
+    border-bottom: 1px solid #e0e0e0;
+    display: flex; align-items: baseline; gap: 14px;
+}
+header h1 { font-size: 22px; }
+header .subtitle { font-size: 13px; color: #888; }
+
+.main {
+    display: flex; padding: 20px; gap: 20px;
+    max-width: 1400px; margin: 0 auto;
+}
+
+/* ===== 드로잉 영역 ===== */
+.draw-section { min-width: 310px; }
+.draw-section h2 { font-size: 15px; margin-bottom: 8px; }
+
+#drawCanvas {
+    border: 1px solid #ccc; cursor: crosshair;
+    display: block; background: #fff;
+    touch-action: none;
+}
+
+.draw-controls { display: flex; gap: 8px; margin-top: 10px; }
+.draw-controls button, .viz-controls button {
+    padding: 6px 18px; border: none; border-radius: 4px;
+    font-size: 13px; cursor: pointer; background: #f0f0f0; color: #222;
+    transition: background 0.15s;
+}
+.draw-controls button:hover, .viz-controls button:hover { background: #e0e0e0; }
+
+.prediction {
+    margin-top: 12px; font-size: 15px; color: #888;
+    min-height: 30px;
+}
+.prediction.active { font-size: 22px; font-weight: bold; color: #222; }
+
+/* ===== 시각화 영역 ===== */
+.viz-section { flex: 1; min-width: 0; }
+.viz-section h2 { font-size: 15px; margin-bottom: 8px; }
+
+/* 아키텍처 바 */
+.arch-bar {
+    display: flex; align-items: center; gap: 4px;
+    padding: 12px; background: #fafafa; border: 1px solid #eee;
+    border-radius: 8px; margin-bottom: 10px; overflow-x: auto;
+}
+.arch-layer {
+    text-align: center; cursor: pointer; flex-shrink: 0;
+}
+.arch-block {
+    padding: 8px 12px; border-radius: 6px; font-size: 12px; font-weight: 600;
+    background: var(--layer-color); color: #fff; opacity: 0.35;
+    transition: all 0.2s;
+}
+.arch-layer.active .arch-block { opacity: 1; transform: scale(1.08); }
+.arch-layer.past .arch-block { opacity: 0.6; }
+.arch-size { display: block; font-size: 10px; color: #bbb; margin-top: 3px; }
+.arch-layer.active .arch-size { color: #666; font-weight: 600; }
+.arch-arrow { color: #ccc; font-size: 16px; flex-shrink: 0; }
+
+.viz-controls { display: flex; gap: 8px; margin-bottom: 12px; }
+
+/* 상세 뷰 */
+.detail-view {
+    background: #fafafa; border: 1px solid #eee; border-radius: 8px;
+    padding: 20px; min-height: 380px;
+    position: relative; overflow: hidden;
+}
+.detail-placeholder { color: #bbb; text-align: center; padding-top: 160px; }
+
+.detail-title {
+    font-size: 14px; font-weight: 700; margin-bottom: 14px; padding-bottom: 8px;
+    border-bottom: 2px solid currentColor;
+}
+
+/* ===== Conv 상세 뷰 ===== */
+.conv-detail { display: flex; gap: 16px; align-items: flex-start; }
+.conv-input, .conv-kernels, .conv-output { text-align: center; }
+.conv-input canvas, .conv-output canvas { border: 1px solid #ddd; }
+.conv-label { font-size: 11px; color: #888; margin-top: 4px; }
+.conv-arrow { font-size: 24px; color: #ccc; align-self: center; padding: 0 4px; }
+
+/* 커널 그리드 */
+.kernel-grid {
+    display: grid; gap: 4px; justify-content: center;
+}
+.kernel-grid canvas {
+    border: 1px solid #ddd; border-radius: 2px;
+}
+.kernel-label { font-size: 9px; color: #aaa; text-align: center; }
+
+/* 슬라이딩 커널 애니메이션 */
+.conv-input { position: relative; }
+.sliding-kernel {
+    position: absolute; border: 2px solid red; pointer-events: none;
+    transition: left 0.15s, top 0.15s;
+}
+
+/* Feature map 그리드 */
+.fmap-grid { display: grid; gap: 3px; }
+.fmap-grid canvas { border: 1px solid #ddd; }
+.fmap-item { text-align: center; }
+.fmap-item span { font-size: 8px; color: #aaa; }
+
+/* ===== Pool 상세 뷰 ===== */
+.pool-detail { display: flex; gap: 16px; align-items: flex-start; }
+.pool-compare { display: flex; gap: 12px; align-items: center; }
+.pool-compare canvas { border: 1px solid #ddd; }
+
+/* ===== Flatten + FC 뷰 ===== */
+.fc-detail { display: flex; gap: 14px; align-items: flex-start; }
+.flatten-strip {
+    display: flex; flex-direction: column; gap: 1px;
+    overflow: hidden; max-height: 300px;
+}
+.flatten-strip .row {
+    display: flex; gap: 1px; transition: transform 0.3s;
+}
+.flatten-strip .cell {
+    width: 5px; height: 5px; border-radius: 1px;
+}
+.fc-bar-chart { flex: 1; }
+.fc-bar-chart canvas { width: 100%; }
+
+/* ===== Output 뷰 ===== */
+.output-detail { }
+.output-bar {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
+}
+.output-digit { font-size: 18px; font-weight: 700; width: 24px; text-align: center; color: #aaa; }
+.output-digit.predicted { color: #222; }
+.output-fill-bg {
+    flex: 1; height: 22px; background: #f0f0f0; border-radius: 4px; overflow: hidden;
+}
+.output-fill {
+    height: 100%; border-radius: 4px; transition: width 0.5s ease;
+}
+.output-fill.predicted { background: #2ECC71; }
+.output-fill.other { background: #ddd; }
+.output-prob { font-size: 12px; width: 50px; text-align: right; color: #aaa; }
+.output-prob.predicted { color: #222; font-weight: 700; }

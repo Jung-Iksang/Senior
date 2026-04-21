@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MNIST CNN 시각화</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.0/dist/ort.min.js"></script>
+</head>
+<body>
+    <header>
+        <h1>MNIST 숫자 인식</h1>
+        <p class="subtitle">Convolutional Neural Network Visualization</p>
+    </header>
+
+    <div class="main">
+        <!-- 왼쪽: 드로잉 -->
+        <section class="draw-section">
+            <h2>숫자 그리기</h2>
+            <canvas id="drawCanvas" width="280" height="280"></canvas>
+            <div class="draw-controls">
+                <button id="btnClear">지우기</button>
+                <button id="btnRecognize">인식하기</button>
+            </div>
+            <div id="prediction" class="prediction">0 ~ 9 숫자를 적어보세요</div>
+        </section>
+
+        <!-- 오른쪽: 시각화 -->
+        <section class="viz-section">
+            <h2>CNN 파이프라인</h2>
+
+            <!-- 아키텍처 다이어그램 -->
+            <div class="arch-bar">
+                <div class="arch-layer" data-layer="0" data-name="Input" data-size="28×28×1">
+                    <div class="arch-block" style="--layer-color: #4A90D9">Input</div>
+                    <span class="arch-size">28×28×1</span>
+                </div>
+                <div class="arch-arrow">→</div>
+                <div class="arch-layer" data-layer="1" data-name="Conv1" data-size="28×28×8">
+                    <div class="arch-block" style="--layer-color: #E8734A">Conv1</div>
+                    <span class="arch-size">28×28×8</span>
+                </div>
+                <div class="arch-arrow">→</div>
+                <div class="arch-layer" data-layer="2" data-name="Pool1" data-size="14×14×8">
+                    <div class="arch-block" style="--layer-color: #F5A623">Pool1</div>
+                    <span class="arch-size">14×14×8</span>
+                </div>
+                <div class="arch-arrow">→</div>
+                <div class="arch-layer" data-layer="3" data-name="Conv2" data-size="14×14×16">
+                    <div class="arch-block" style="--layer-color: #E8734A">Conv2</div>
+                    <span class="arch-size">14×14×16</span>
+                </div>
+                <div class="arch-arrow">→</div>
+                <div class="arch-layer" data-layer="4" data-name="Pool2" data-size="7×7×16">
+                    <div class="arch-block" style="--layer-color: #F5A623">Pool2</div>
+                    <span class="arch-size">7×7×16</span>
+                </div>
+                <div class="arch-arrow">→</div>
+                <div class="arch-layer" data-layer="5" data-name="Flatten+FC" data-size="784→64">
+                    <div class="arch-block" style="--layer-color: #7ED321">FC</div>
+                    <span class="arch-size">784→64</span>
+                </div>
+                <div class="arch-arrow">→</div>
+                <div class="arch-layer" data-layer="6" data-name="Output" data-size="10">
+                    <div class="arch-block" style="--layer-color: #D0021B">Output</div>
+                    <span class="arch-size">10</span>
+                </div>
+            </div>
+
+            <!-- 컨트롤 -->
+            <div class="viz-controls">
+                <button id="btnStep">다음 단계 (Space)</button>
+                <button id="btnAutoPlay">자동 재생</button>
+                <button id="btnReplay">처음부터</button>
+            </div>
+
+            <!-- 상세 시각화 영역 -->
+            <div id="detailView" class="detail-view">
+                <p class="detail-placeholder">숫자를 그리면 CNN의 동작 과정을 단계별로 보여드립니다</p>
+            </div>
+        </section>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
