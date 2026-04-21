@@ -83,7 +83,7 @@ def export():
         input_names=['input'],
         output_names=output_names,
         dynamic_axes={'input': {0: 'batch'}},
-        opset_version=13
+        opset_version=17
     )
     print(f'ONNX 모델 저장: {ONNX_PATH}')
 

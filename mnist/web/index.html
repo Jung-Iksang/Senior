@@ -1,86 +1,1193 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MNIST CNN 시각화</title>
-    <link rel="stylesheet" href="style.css">
-    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.0/dist/ort.min.js"></script>
+<meta charset="UTF-8">
+<title>MNIST CNN — 한 눈에 보는 전체 파이프라인</title>
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.21.0/dist/ort.min.js"></script>
+<style>
+  :root {
+    --bg:#fafaf7; --panel:#fff; --ink:#1a1a1a; --muted:#888; --line:#e6e4dd;
+    --accent:#2563eb; --warm:#d97757; --green:#16a34a; --red:#dc2626;
+  }
+  * { box-sizing: border-box; margin:0; padding:0; }
+  html, body {
+    background:var(--bg); color:var(--ink);
+    font-family: -apple-system, "Apple SD Gothic Neo", "Pretendard", Inter, sans-serif;
+    font-feature-settings: "tnum" 1;
+    -webkit-font-smoothing: antialiased;
+    height: 100%; overflow: hidden;
+  }
+  body { display:flex; flex-direction:column; }
+
+  /* ===== Header ===== */
+  header {
+    display:flex; align-items:baseline; gap:14px;
+    padding: 10px 18px; border-bottom: 1px solid var(--line); background:#fff;
+    flex-shrink: 0;
+  }
+  header h1 { font-size: 17px; font-weight: 700; letter-spacing:-0.3px; }
+  header .sub { font-size: 12px; color: var(--muted); }
+  header .live { margin-left: auto; font-size: 11px; color: var(--muted); display:flex; align-items:center; gap:5px; }
+  header .live .dot { width:6px; height:6px; border-radius:50%; background:#ccc; }
+  header .live.ready .dot { background: var(--green); }
+  header .toggles { display:flex; gap:10px; font-size: 11px; margin-left: 20px; }
+  header .toggle { display:flex; align-items:center; gap:4px; cursor:pointer; color:#555; user-select:none; }
+  header .toggle input { accent-color: var(--accent); margin:0; }
+
+  /* ===== Scaling stage — fits viewport ===== */
+  .stage-wrap {
+    flex: 1; position: relative; overflow: hidden;
+  }
+  .stage {
+    position: absolute;
+    top: 0; left: 0;
+    width: 1560px;
+    transform-origin: top left;
+    display: grid;
+    grid-template-columns: 240px 1fr;
+    gap: 14px;
+    padding: 16px;
+  }
+
+  /* ----- Left: draw panel ----- */
+  .draw-panel {
+    background: var(--panel); border:1px solid var(--line);
+    border-radius: 10px; padding: 12px;
+    display:flex; flex-direction:column;
+    max-width: 240px; overflow: hidden;
+  }
+  .draw-panel h2 { font-size: 12px; font-weight: 600; margin-bottom: 6px; color:#444; }
+  #drawCanvas {
+    width: 216px; height: 216px; display:block;
+    background:#fff; border:1px solid var(--line); border-radius:6px;
+    cursor: crosshair; touch-action: none;
+  }
+  .draw-controls { display:flex; gap:5px; margin-top: 6px; }
+  .btn {
+    flex:1; padding:6px 8px; border:1px solid var(--line); border-radius:5px;
+    background:#fff; color:#333; font-size: 11px; cursor:pointer;
+    font-family: inherit; transition: all .12s;
+  }
+  .btn:hover { background:#f4f3ee; }
+  .btn.primary { background: var(--ink); color:#fff; border-color:var(--ink); }
+  .btn.primary:hover { background:#000; }
+
+  .presets { margin-top: 10px; }
+  .presets-title { font-size: 10px; color: var(--muted); margin-bottom: 5px;
+    text-transform: uppercase; letter-spacing: .05em; }
+  .preset-grid { display:grid; grid-template-columns: repeat(5, 1fr); gap:3px; max-width:216px; }
+  .preset {
+    aspect-ratio: 1; border:1px solid var(--line); border-radius:4px;
+    background:#fff; cursor:pointer; padding:2px;
+    display:flex; align-items:center; justify-content:center;
+    min-width:0; overflow:hidden;
+  }
+  .preset:hover { border-color:#999; }
+  .preset canvas { width:100%; height:100%; image-rendering:pixelated; }
+
+  .prediction-box {
+    margin-top: 10px; padding: 10px; border-radius:6px;
+    background: #f4f3ee; border:1px solid var(--line); text-align:center;
+  }
+  .pred-label { font-size: 9px; color: var(--muted);
+    text-transform: uppercase; letter-spacing:.06em; margin-bottom: 2px; }
+  .pred-digit { font-size: 38px; font-weight: 700; line-height: 1;
+    font-variant-numeric: tabular-nums;
+    font-family: "SF Pro Display", -apple-system, sans-serif;
+  }
+  .pred-conf { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+  .probs { margin-top: 8px; display:flex; flex-direction:column; gap: 1px; }
+  .prob-row {
+    display:grid; grid-template-columns: 12px 1fr 34px;
+    gap: 5px; align-items:center; font-size: 9px;
+  }
+  .prob-row .d { font-weight: 600; color:#666; text-align:center; }
+  .prob-row .bar { height: 5px; background: #e6e4dd; border-radius:3px; overflow:hidden; }
+  .prob-row .bar-fill { height: 100%; background: #bbb; transition: width .3s; }
+  .prob-row.top .d { color: var(--green); }
+  .prob-row.top .bar-fill { background: var(--green); }
+  .prob-row .v { color: #888; text-align:right; font-variant-numeric: tabular-nums; }
+
+  /* ===== Right: pipeline area ===== */
+  .pipeline {
+    background: var(--panel); border:1px solid var(--line);
+    border-radius: 10px; padding: 14px 16px;
+    display: flex; flex-direction: column;
+    position: relative;
+    min-width: 0;
+  }
+
+  /* row 1 — convolutional pipeline */
+  .row-conv {
+    display: flex; align-items: center; gap: 6px;
+    padding-bottom: 12px; border-bottom: 1px dashed var(--line);
+  }
+  .col { display:flex; flex-direction:column; align-items:center; gap: 4px; flex-shrink:0; }
+  .col-title { font-size: 10.5px; font-weight: 700; color: #333; letter-spacing:.02em; }
+  .col-sub { font-size: 9.5px; color: var(--muted); margin-top:-2px; font-variant-numeric: tabular-nums; }
+  .col-body { position: relative; }
+  .col-caption { font-size: 9.5px; color: var(--muted); margin-top: 3px; max-width:140px; text-align:center; line-height:1.3; }
+
+  /* arrow */
+  .arrow {
+    display:flex; flex-direction:column; align-items:center;
+    color: #bbb; flex-shrink:0; user-select:none;
+    padding-top: 30px;
+  }
+  .arrow .op { font-size: 9.5px; color:#888; margin-top:3px;
+    background:#f4f3ee; padding: 1px 5px; border-radius:3px;
+    border:1px solid var(--line); white-space:nowrap;
+  }
+  .arrow svg { width: 22px; height: 12px; }
+
+  /* input grid with values */
+  .input-grid {
+    display:grid; border:1px solid #444; background:#fff;
+    grid-template-columns: repeat(28, 8px);
+  }
+  .input-grid .cell {
+    width: 8px; height: 8px;
+    display:flex; align-items:center; justify-content:center;
+    font-size: 4px; font-variant-numeric: tabular-nums;
+    line-height: 1; font-weight: 500;
+  }
+  .input-grid .cell.zero { color: rgba(0,0,0,0.12); }
+  .input-grid .cell.low { color: #222; }
+  .input-grid .cell.high { color: #fff; }
+
+  /* channel grid (conv/pool stages): 2-column grid instead of tall stack */
+  .ch-grid {
+    display: grid; gap: 3px;
+  }
+  .ch-cell { position: relative; border: 1px solid #ddd; background:#fff; }
+  .ch-cell canvas { display:block; image-rendering: pixelated; }
+  .ch-cell .ch-tag {
+    position:absolute; top:0; left:0; font-size: 7px;
+    padding: 0 2px; color:#fff; background: rgba(0,0,0,0.55);
+    border-bottom-right-radius: 2px; font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ===== Row 2: flatten -> hidden -> output ===== */
+  .row-fc {
+    flex: 1; padding-top: 14px;
+    position: relative;
+    display: grid;
+    grid-template-rows: auto 1fr;
+    gap: 8px;
+  }
+  .row-fc-labels {
+    display: flex; justify-content: space-between;
+    font-size: 11px; font-weight: 600; color:#333;
+    padding: 0 8px;
+  }
+  .fc-stage {
+    position: relative;
+    display: grid;
+    grid-template-columns: 1fr 60px 120px 60px 140px;
+    align-items: stretch;
+    height: 480px;
+  }
+
+  /* flatten strip — horizontal */
+  .flatten-horiz {
+    position: relative; width: 100%;
+    height: 36px; border: 1px solid #444; background:#fff;
+    display: grid;
+    grid-template-columns: repeat(784, 1fr);
+    overflow: hidden;
+  }
+  .flatten-horiz .fcell {
+    height: 100%; position: relative;
+  }
+  .flatten-horiz .fcell .top-bar {
+    position: absolute; top:0; left:0; right:0; height: 3px;
+  }
+
+  .flatten-caption {
+    font-size: 10px; color:#777; text-align:center; margin-top:2px;
+  }
+
+  /* Flatten interactive: hover state */
+  .fcell.hl { outline: 2px solid #16a34a; z-index: 2; }
+  .ch-cell .hl-dot {
+    position: absolute; pointer-events:none;
+    border: 2px solid #16a34a; box-shadow: 0 0 0 1px #fff inset;
+    z-index: 3; transition: opacity .1s;
+  }
+
+  /* Flatten play button */
+  .flatten-play-btn {
+    position: absolute; right: 0; top: -2px;
+    font-size: 10px; padding: 3px 8px;
+    background: var(--ink); color:#fff; border:none; border-radius:4px;
+    cursor: pointer; font-family: inherit;
+  }
+  .flatten-play-btn:hover { background:#000; }
+  .flatten-play-btn:disabled { background:#aaa; cursor: default; }
+
+  /* Animation overlay for flatten */
+  #flyoverSvg {
+    position: fixed; inset: 0; pointer-events: none; z-index: 50;
+  }
+  .fly-dot {
+    position: fixed; width: 6px; height: 6px; border-radius: 50%;
+    pointer-events: none; z-index: 51;
+    box-shadow: 0 0 6px rgba(0,0,0,0.2);
+  }
+
+  /* Hidden + Output columns (vertical lists) */
+  .nn-col {
+    position: relative; height: 100%;
+    align-self: stretch;
+    display:flex; flex-direction:column; align-items:center;
+    padding: 4px 0;
+  }
+  .neurons {
+    position: relative;
+    display: grid;
+    grid-template-columns: repeat(2, 12px);
+    gap: 3px 6px;
+    align-content: space-between;
+    flex: 1;
+    min-height: 0;
+  }
+  .neuron {
+    width: 11px; height: 11px; border-radius: 50%;
+    background: #eaeaea; border: 1px solid #c0c0c0;
+    transition: background .3s;
+    flex-shrink: 0;
+  }
+  .output-neurons {
+    display:flex; flex-direction:column; gap: 2px;
+    align-items: center; flex:1; justify-content: space-between;
+  }
+  .output-neuron {
+    width: 24px; height: 24px; border-radius: 50%;
+    background:#eee; border: 1.5px solid #bbb;
+    display:flex; align-items:center; justify-content:center;
+    font-size: 12px; font-weight: 700;
+    color:#999; transition: all .3s;
+    flex-shrink: 0;
+    position: relative;
+  }
+  .output-neuron.top {
+    background: var(--green); color:#fff; border-color: #15803d;
+    box-shadow: 0 0 0 3px rgba(22,163,74,0.15);
+    transform: scale(1.15);
+  }
+  .output-neuron.hot {
+    background: #fff0e8; color: var(--warm); border-color: var(--warm);
+  }
+  .output-neuron .oprob {
+    position: absolute; left: 100%; top: 50%;
+    transform: translateY(-50%);
+    font-size: 9.5px; font-weight: 500; color: #666;
+    padding-left: 6px; white-space: nowrap;
+  }
+  .output-neuron.top .oprob { color: var(--green); font-weight: 700; }
+
+  /* connection SVG overlay */
+  .connections {
+    position: absolute; inset: 0;
+    pointer-events: none;
+    width: 100%; height: 100%;
+  }
+
+  /* Row-fc zone labels */
+  .zone-label {
+    font-size: 10px; color: var(--muted);
+    text-align:center; margin-bottom: 4px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* loading overlay */
+  .loading {
+    position: fixed; inset:0; background: rgba(255,255,255,0.92);
+    display:flex; align-items:center; justify-content:center;
+    z-index: 100; font-size: 14px; color: #666;
+    transition: opacity .3s;
+  }
+  .loading.hidden { opacity:0; pointer-events:none; display:none; }
+
+  /* legend in footer of pipeline */
+  .notes {
+    position: absolute; bottom: 8px; left: 16px; right: 16px;
+    font-size: 10px; color: var(--muted);
+    display:flex; gap: 12px; flex-wrap:wrap;
+    pointer-events: none;
+  }
+  .notes .legend { display:inline-flex; align-items:center; gap:4px; }
+  .notes .sw { width:9px; height:9px; border-radius:2px; display:inline-block; }
+
+  /* ===== Mobile responsive ===== */
+  @media (max-width: 768px) {
+    html, body { height: auto; overflow: auto; }
+
+    header { flex-wrap: wrap; gap: 6px; padding: 8px 12px; }
+    header h1 { font-size: 15px; }
+    header .sub { display: none; }
+    header .toggles { margin-left: 0; }
+    header .live { margin-left: auto; }
+
+    .stage-wrap { overflow: auto; }
+    .stage {
+      position: relative !important;
+      width: 100% !important;
+      transform: none !important;
+      left: 0 !important;
+      grid-template-columns: 1fr;
+      padding: 10px;
+      gap: 10px;
+    }
+
+    .draw-panel {
+      max-width: 100%;
+      flex-direction: column;
+      align-items: center;
+    }
+    #drawCanvas { width: 100%; max-width: 280px; height: auto; aspect-ratio: 1; }
+    .draw-controls { max-width: 280px; width: 100%; }
+    .preset-grid { max-width: 280px; }
+    .prediction-box { max-width: 280px; width: 100%; }
+    .probs { max-width: 280px; width: 100%; }
+
+    .pipeline { padding: 10px; }
+
+    .row-conv {
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 8px;
+    }
+    .arrow { padding-top: 0; }
+    .arrow svg { transform: rotate(90deg); }
+
+    .input-grid {
+      grid-template-columns: repeat(28, 6px);
+    }
+    .input-grid .cell { width: 6px; height: 6px; font-size: 0; }
+
+    .fc-stage {
+      grid-template-columns: 1fr;
+      height: auto;
+      gap: 16px;
+    }
+    .fc-stage > div { justify-content: center; }
+
+    .flatten-horiz {
+      height: 24px;
+    }
+
+    .neurons {
+      grid-template-columns: repeat(8, 11px);
+      justify-content: center;
+    }
+    .output-neurons {
+      flex-direction: row;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    .nn-col { height: auto; padding: 8px 0; }
+
+    .connections { display: none; } /* SVG 연결선 모바일에서 숨김 */
+
+    .notes { position: static; padding: 8px 0; }
+  }
+</style>
 </head>
 <body>
-    <header>
-        <h1>MNIST 숫자 인식</h1>
-        <p class="subtitle">Convolutional Neural Network Visualization</p>
-    </header>
 
-    <div class="main">
-        <!-- 왼쪽: 드로잉 -->
-        <section class="draw-section">
-            <h2>숫자 그리기</h2>
-            <canvas id="drawCanvas" width="280" height="280"></canvas>
-            <div class="draw-controls">
-                <button id="btnClear">지우기</button>
-                <button id="btnRecognize">인식하기</button>
-            </div>
-            <div id="prediction" class="prediction">0 ~ 9 숫자를 적어보세요</div>
-        </section>
+<div class="loading" id="loading">모델 로딩 중…</div>
 
-        <!-- 오른쪽: 시각화 -->
-        <section class="viz-section">
-            <h2>CNN 파이프라인</h2>
+<header>
+  <h1>MNIST CNN — 한 눈에 보는 전체 파이프라인</h1>
+  <span class="sub">Input · Conv · Pool · Flatten · Hidden · Output</span>
+  <div class="toggles">
+    <label class="toggle"><input type="checkbox" id="togValues" checked> 픽셀 값</label>
+    <label class="toggle"><input type="checkbox" id="togConn" checked> 연결선</label>
+  </div>
+  <span class="live" id="liveStatus"><span class="dot"></span>실시간</span>
+</header>
 
-            <!-- 아키텍처 다이어그램 -->
-            <div class="arch-bar">
-                <div class="arch-layer" data-layer="0" data-name="Input" data-size="28×28×1">
-                    <div class="arch-block" style="--layer-color: #4A90D9">Input</div>
-                    <span class="arch-size">28×28×1</span>
-                </div>
-                <div class="arch-arrow">→</div>
-                <div class="arch-layer" data-layer="1" data-name="Conv1" data-size="28×28×8">
-                    <div class="arch-block" style="--layer-color: #E8734A">Conv1</div>
-                    <span class="arch-size">28×28×8</span>
-                </div>
-                <div class="arch-arrow">→</div>
-                <div class="arch-layer" data-layer="2" data-name="Pool1" data-size="14×14×8">
-                    <div class="arch-block" style="--layer-color: #F5A623">Pool1</div>
-                    <span class="arch-size">14×14×8</span>
-                </div>
-                <div class="arch-arrow">→</div>
-                <div class="arch-layer" data-layer="3" data-name="Conv2" data-size="14×14×16">
-                    <div class="arch-block" style="--layer-color: #E8734A">Conv2</div>
-                    <span class="arch-size">14×14×16</span>
-                </div>
-                <div class="arch-arrow">→</div>
-                <div class="arch-layer" data-layer="4" data-name="Pool2" data-size="7×7×16">
-                    <div class="arch-block" style="--layer-color: #F5A623">Pool2</div>
-                    <span class="arch-size">7×7×16</span>
-                </div>
-                <div class="arch-arrow">→</div>
-                <div class="arch-layer" data-layer="5" data-name="Flatten+FC" data-size="784→64">
-                    <div class="arch-block" style="--layer-color: #7ED321">FC</div>
-                    <span class="arch-size">784→64</span>
-                </div>
-                <div class="arch-arrow">→</div>
-                <div class="arch-layer" data-layer="6" data-name="Output" data-size="10">
-                    <div class="arch-block" style="--layer-color: #D0021B">Output</div>
-                    <span class="arch-size">10</span>
-                </div>
-            </div>
+<div class="stage-wrap" id="stageWrap">
+  <div class="stage" id="stage">
 
-            <!-- 컨트롤 -->
-            <div class="viz-controls">
-                <button id="btnStep">다음 단계 (Space)</button>
-                <button id="btnAutoPlay">자동 재생</button>
-                <button id="btnReplay">처음부터</button>
-            </div>
+    <!-- ===== LEFT: draw panel ===== -->
+    <aside class="draw-panel">
+      <h2>숫자를 그려보세요</h2>
+      <canvas id="drawCanvas" width="216" height="216"></canvas>
+      <div class="draw-controls">
+        <button class="btn" id="btnClear">지우기</button>
+        <button class="btn primary" id="btnRecognize">인식</button>
+      </div>
 
-            <!-- 상세 시각화 영역 -->
-            <div id="detailView" class="detail-view">
-                <p class="detail-placeholder">숫자를 그리면 CNN의 동작 과정을 단계별로 보여드립니다</p>
-            </div>
-        </section>
-    </div>
+      <div class="presets">
+        <div class="presets-title">샘플 숫자</div>
+        <div class="preset-grid" id="presetGrid"></div>
+      </div>
 
-    <script src="app.js"></script>
+      <div class="prediction-box">
+        <div class="pred-label">예측</div>
+        <div class="pred-digit" id="predDigit">–</div>
+        <div class="pred-conf" id="predConf">숫자를 그려주세요</div>
+      </div>
+
+      <div class="probs" id="probs"></div>
+    </aside>
+
+    <!-- ===== RIGHT: pipeline ===== -->
+    <section class="pipeline" id="pipeline">
+
+      <!-- Row 1: Conv/Pool pipeline -->
+      <div class="row-conv" id="rowConv"></div>
+
+      <!-- Row 2: Flatten -> Hidden -> Output -->
+      <div class="row-fc" id="rowFc">
+        <div class="fc-stage" id="fcStage">
+          <!-- col: flatten + label -->
+          <div class="nn-col" id="colFlatten" style="position:relative;">
+            <div class="zone-label">Flatten — 2D → 1D (784 × 1)</div>
+            <button class="flatten-play-btn" id="flattenPlayBtn">▶ 펼치기 애니메이션</button>
+            <div class="flatten-horiz" id="flattenHoriz"></div>
+            <div class="flatten-caption">16 채널 × 7 × 7 = <b>784</b>개 · <span style="color:#888">pool2 셀에 호버하면 flatten 위치가 표시됩니다</span></div>
+          </div>
+          <!-- arrow -->
+          <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:#aaa;font-size:10px;">
+            <svg width="28" height="14" viewBox="0 0 28 14"><path d="M0 7 L24 7 M20 3 L24 7 L20 11" fill="none" stroke="#aaa" stroke-width="1.5"/></svg>
+            <div style="margin-top:4px; font-size:9px; background:#f4f3ee; padding:1px 5px; border-radius:3px; border:1px solid var(--line); white-space:nowrap;">Dense + ReLU</div>
+          </div>
+          <!-- hidden col -->
+          <div class="nn-col" id="colHidden">
+            <div class="zone-label">Hidden — 은닉층 (64개)</div>
+            <div class="neurons" id="hiddenNeurons"></div>
+          </div>
+          <!-- arrow -->
+          <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:#aaa;font-size:10px;">
+            <svg width="28" height="14" viewBox="0 0 28 14"><path d="M0 7 L24 7 M20 3 L24 7 L20 11" fill="none" stroke="#aaa" stroke-width="1.5"/></svg>
+            <div style="margin-top:4px; font-size:9px; background:#f4f3ee; padding:1px 5px; border-radius:3px; border:1px solid var(--line); white-space:nowrap;">Softmax</div>
+          </div>
+          <!-- output col -->
+          <div class="nn-col" id="colOutput">
+            <div class="zone-label">Output — 0–9 확률</div>
+            <div class="output-neurons" id="outputNeurons"></div>
+          </div>
+
+          <svg class="connections" id="connSvg"></svg>
+        </div>
+      </div>
+
+      <div class="notes">
+        <span class="legend"><span class="sw" style="background:#222"></span>밝을수록 큰 값</span>
+        <span class="legend"><span class="sw" style="background:#2563eb"></span>양의 활성</span>
+        <span class="legend"><span class="sw" style="background:#d97757"></span>음의 활성</span>
+        <span class="legend"><span class="sw" style="background:#16a34a"></span>예측 경로</span>
+      </div>
+    </section>
+  </div>
+</div>
+
+<script>
+// ================================================================
+//  Global state
+// ================================================================
+let session = null;
+let weights = null;
+let activations = null;
+let inputImage = null;
+let inputRaw255 = null;
+let probabilities = null;
+let predicted = -1;
+
+const CH_COLORS_16 = [
+  '#2563eb','#d97757','#16a34a','#9333ea','#ea580c','#0891b2','#db2777','#ca8a04',
+  '#475569','#b45309','#065f46','#7c3aed','#be123c','#0e7490','#a16207','#1e40af',
+];
+
+// ================================================================
+//  Init
+// ================================================================
+window.addEventListener('DOMContentLoaded', async () => {
+  buildConvRow();
+  setupCanvas();
+  setupPresets();
+  setupButtons();
+  await loadModel();
+  scaleStage();
+  await loadPresetAndRecognize(3);
+});
+
+window.addEventListener('resize', () => {
+  scaleStage();
+  if (activations) requestAnimationFrame(drawConnections);
+});
+
+async function loadModel() {
+  try {
+    ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.21.0/dist/';
+    session = await ort.InferenceSession.create('./model.onnx', { executionProviders: ['wasm'] });
+    weights = await (await fetch('./weights.json')).json();
+    document.getElementById('loading').classList.add('hidden');
+    document.getElementById('liveStatus').classList.add('ready');
+  } catch (e) {
+    console.error(e);
+    document.getElementById('loading').textContent = '모델 로드 실패';
+  }
+}
+
+// ================================================================
+//  Scale stage to fit viewport
+// ================================================================
+function scaleStage() {
+  // 모바일에서는 CSS가 레이아웃을 처리하므로 스케일링 불필요
+  if (window.innerWidth <= 768) return;
+
+  const wrap = document.getElementById('stageWrap');
+  const stage = document.getElementById('stage');
+  const sw = Math.max(stage.offsetWidth, stage.scrollWidth);
+  const sh = Math.max(stage.offsetHeight, stage.scrollHeight);
+  const ww = wrap.clientWidth, wh = wrap.clientHeight;
+  const scale = Math.min(ww / sw, wh / sh, 1);
+  const scaledW = sw * scale;
+  const leftOffset = (ww - scaledW) / 2;
+  stage.style.transform = `scale(${scale})`;
+  stage.style.left = leftOffset + 'px';
+}
+
+// ================================================================
+//  Row 1 (Conv pipeline)
+// ================================================================
+function buildConvRow() {
+  const row = document.getElementById('rowConv');
+  row.innerHTML = '';
+
+  row.appendChild(makeCol('Input', '28 × 28 × 1  ·  784 pixels', 'inputCol', '손글씨 원본'));
+  row.appendChild(makeArrow('Conv 3×3'));
+  row.appendChild(makeCol('Conv1 + ReLU', '28 × 28 × 8', 'conv1Col', '8개 필터 · 에지'));
+  row.appendChild(makeArrow('MaxPool 2×2'));
+  row.appendChild(makeCol('Pool1', '14 × 14 × 8', 'pool1Col', '크기 절반'));
+  row.appendChild(makeArrow('Conv 3×3'));
+  row.appendChild(makeCol('Conv2 + ReLU', '14 × 14 × 16', 'conv2Col', '16개 필터 · 형태'));
+  row.appendChild(makeArrow('MaxPool 2×2'));
+  row.appendChild(makeCol('Pool2', '7 × 7 × 16', 'pool2Col', '최종 특징맵'));
+}
+function makeCol(title, sub, id, caption) {
+  const col = document.createElement('div');
+  col.className = 'col';
+  col.innerHTML = `
+    <div class="col-title">${title}</div>
+    <div class="col-sub">${sub}</div>
+    <div class="col-body" id="${id}"></div>
+    <div class="col-caption">${caption}</div>`;
+  return col;
+}
+function makeArrow(label) {
+  const a = document.createElement('div');
+  a.className = 'arrow';
+  a.innerHTML = `
+    <svg viewBox="0 0 22 12"><path d="M0 6 L18 6 M15 3 L18 6 L15 9" fill="none" stroke="#aaa" stroke-width="1.5"/></svg>
+    <div class="op">${label}</div>`;
+  return a;
+}
+
+// ================================================================
+//  Drawing canvas
+// ================================================================
+function setupCanvas() {
+  const canvas = document.getElementById('drawCanvas');
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, 216, 216);
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.lineWidth = 18; ctx.strokeStyle = '#000';
+
+  let drawing = false, lastX, lastY;
+  const start = (x,y) => {
+    drawing = true; lastX = x; lastY = y;
+    ctx.beginPath(); ctx.arc(x, y, 9, 0, Math.PI*2);
+    ctx.fillStyle = '#000'; ctx.fill();
+  };
+  const move = (x,y) => {
+    if (!drawing) return;
+    ctx.beginPath(); ctx.moveTo(lastX, lastY); ctx.lineTo(x, y); ctx.stroke();
+    lastX = x; lastY = y;
+  };
+  const end = () => { if (drawing) { drawing = false; recognize(); } };
+
+  canvas.addEventListener('mousedown', e => start(e.offsetX, e.offsetY));
+  canvas.addEventListener('mousemove', e => move(e.offsetX, e.offsetY));
+  canvas.addEventListener('mouseup', end);
+  canvas.addEventListener('mouseleave', end);
+  canvas.addEventListener('touchstart', e => { e.preventDefault(); const r = canvas.getBoundingClientRect(); const t = e.touches[0]; start(t.clientX - r.left, t.clientY - r.top); });
+  canvas.addEventListener('touchmove',  e => { e.preventDefault(); const r = canvas.getBoundingClientRect(); const t = e.touches[0]; move(t.clientX - r.left, t.clientY - r.top); });
+  canvas.addEventListener('touchend',   e => { e.preventDefault(); end(); });
+}
+
+function clearDraw() {
+  const ctx = document.getElementById('drawCanvas').getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, 216, 216);
+}
+
+// ================================================================
+//  Preprocessing — MNIST style (resize + center)
+// ================================================================
+function preprocessCanvas() {
+  const canvas = document.getElementById('drawCanvas');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  const pixels = ctx.getImageData(0, 0, W, H).data;
+
+  const gray = new Float32Array(W*H);
+  for (let i = 0; i < W*H; i++) gray[i] = 1.0 - (pixels[i*4] / 255.0);
+
+  let minR = H, maxR = 0, minC = W, maxC = 0;
+  for (let r = 0; r < H; r++) for (let c = 0; c < W; c++) {
+    if (gray[r*W+c] > 0.02) {
+      if (r < minR) minR = r; if (r > maxR) maxR = r;
+      if (c < minC) minC = c; if (c > maxC) maxC = c;
+    }
+  }
+  if (minR >= maxR) return null;
+
+  const cropH = maxR - minR + 1, cropW = maxC - minC + 1;
+  const scale = 20.0 / Math.max(cropH, cropW);
+  const newH = Math.max(1, Math.round(cropH * scale));
+  const newW = Math.max(1, Math.round(cropW * scale));
+
+  const cropCanvas = document.createElement('canvas');
+  cropCanvas.width = cropW; cropCanvas.height = cropH;
+  const cropCtx = cropCanvas.getContext('2d');
+  const cropImg = cropCtx.createImageData(cropW, cropH);
+  for (let r = 0; r < cropH; r++) for (let c = 0; c < cropW; c++) {
+    const v = Math.round(gray[(minR+r)*W+(minC+c)] * 255);
+    const idx = (r*cropW+c)*4;
+    cropImg.data[idx]=v; cropImg.data[idx+1]=v; cropImg.data[idx+2]=v; cropImg.data[idx+3]=255;
+  }
+  cropCtx.putImageData(cropImg, 0, 0);
+
+  const tmp = document.createElement('canvas');
+  tmp.width=28; tmp.height=28;
+  const tctx = tmp.getContext('2d');
+  tctx.fillStyle = '#000'; tctx.fillRect(0,0,28,28);
+  const offX = Math.round((28 - newW)/2), offY = Math.round((28 - newH)/2);
+  tctx.drawImage(cropCanvas, 0, 0, cropW, cropH, offX, offY, newW, newH);
+
+  const finalData = tctx.getImageData(0, 0, 28, 28);
+  const result = new Float32Array(28*28);
+  const raw = new Uint8Array(28*28);
+  for (let i = 0; i < 28*28; i++) {
+    result[i] = finalData.data[i*4] / 255.0;
+    raw[i] = finalData.data[i*4];
+  }
+
+  const MEAN = 0.1307, STD = 0.3081;
+  const normalized = new Float32Array(28*28);
+  for (let i = 0; i < 28*28; i++) normalized[i] = (result[i] - MEAN) / STD;
+
+  inputImage = result;
+  inputRaw255 = raw;
+  return normalized;
+}
+
+// ================================================================
+//  Inference
+// ================================================================
+async function recognize() {
+  if (!session) return;
+  const input = preprocessCanvas();
+  if (!input) {
+    document.getElementById('predDigit').textContent = '–';
+    document.getElementById('predConf').textContent = '숫자를 그려주세요';
+    return;
+  }
+  const tensor = new ort.Tensor('float32', input, [1, 1, 28, 28]);
+  const results = await session.run({ input: tensor });
+
+  activations = {
+    relu1: results.relu1, pool1: results.pool1,
+    relu2: results.relu2, pool2: results.pool2,
+    fc1: results.fc1, fc2: results.fc2,
+  };
+  const fc2 = Array.from(results.fc2.data);
+  const mx = Math.max(...fc2);
+  const exps = fc2.map(v => Math.exp(v - mx));
+  const sumE = exps.reduce((a,b) => a+b, 0);
+  probabilities = exps.map(v => v/sumE);
+  predicted = probabilities.indexOf(Math.max(...probabilities));
+
+  updatePrediction();
+  renderPipeline();
+}
+
+function updatePrediction() {
+  document.getElementById('predDigit').textContent = predicted;
+  document.getElementById('predConf').textContent = `확신도 ${(probabilities[predicted]*100).toFixed(1)}%`;
+
+  const probs = document.getElementById('probs');
+  probs.innerHTML = '';
+  const sorted = probabilities.map((p,i) => ({p, i})).sort((a,b) => b.p - a.p);
+  for (const {p, i} of sorted) {
+    const row = document.createElement('div');
+    row.className = 'prob-row' + (i === predicted ? ' top' : '');
+    row.innerHTML = `
+      <span class="d">${i}</span>
+      <div class="bar"><div class="bar-fill" style="width:${(p*100).toFixed(1)}%"></div></div>
+      <span class="v">${(p*100).toFixed(1)}%</span>`;
+    probs.appendChild(row);
+  }
+}
+
+// ================================================================
+//  Pipeline rendering
+// ================================================================
+function renderPipeline() {
+  if (!activations) return;
+  renderInput();
+  renderChannelsGrid('conv1Col', activations.relu1, 8, 28, 28, 2, 4, 1.4);
+  renderChannelsGrid('pool1Col', activations.pool1, 8, 14, 14, 2, 4, 2.6);
+  renderChannelsGrid('conv2Col', activations.relu2, 16, 14, 14, 4, 4, 1.4);
+  renderChannelsGrid('pool2Col', activations.pool2, 16, 7, 7, 4, 4, 3.6);
+
+  renderFlattenHoriz();
+  renderHidden();
+  renderOutput();
+  scaleStage();
+  requestAnimationFrame(drawConnections);
+}
+
+// ----- INPUT 28x28 with values -----
+function renderInput() {
+  const host = document.getElementById('inputCol');
+  host.innerHTML = '';
+  const grid = document.createElement('div');
+  grid.className = 'input-grid';
+  const showValues = document.getElementById('togValues').checked;
+
+  for (let i = 0; i < 28*28; i++) {
+    const v = inputRaw255[i];
+    const cell = document.createElement('div');
+    cell.className = 'cell';
+    cell.style.background = `rgb(${255-v},${255-v},${255-v})`;
+    if (v === 0) cell.classList.add('zero');
+    else if (v < 128) cell.classList.add('low');
+    else cell.classList.add('high');
+    if (showValues) cell.textContent = v === 0 ? '0' : v;
+    cell.title = `[${Math.floor(i/28)},${i%28}] = ${v}`;
+    grid.appendChild(cell);
+  }
+  host.appendChild(grid);
+}
+
+// pool2 canvas references for hover sync
+let pool2Refs = null;  // [{cell, canvas, ctx, w, h, cellPx}] per channel
+
+// ----- Channel grid (e.g. 2x4 for 8 channels, 4x4 for 16) -----
+function renderChannelsGrid(hostId, tensor, nCh, h, w, rows, cols, cellPx) {
+  const host = document.getElementById(hostId);
+  host.innerHTML = '';
+  const grid = document.createElement('div');
+  grid.className = 'ch-grid';
+  grid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+
+  const data = tensor.data;
+  const mapSize = h * w;
+  let mn = Infinity, mx = -Infinity;
+  for (let i = 0; i < data.length; i++) { if (data[i] < mn) mn = data[i]; if (data[i] > mx) mx = data[i]; }
+  if (mx <= mn) mx = mn + 1;
+
+  const canvasW = w * cellPx;
+  const canvasH = h * cellPx;
+
+  const refs = [];
+  for (let ch = 0; ch < nCh; ch++) {
+    const cell = document.createElement('div');
+    cell.className = 'ch-cell';
+
+    const tag = document.createElement('span');
+    tag.className = 'ch-tag';
+    tag.textContent = ch;
+    tag.style.background = CH_COLORS_16[ch] + 'dd';
+    cell.appendChild(tag);
+
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    canvas.style.width = canvasW + 'px';
+    canvas.style.height = canvasH + 'px';
+    const ctx = canvas.getContext('2d');
+    const img = ctx.createImageData(w, h);
+    for (let i = 0; i < mapSize; i++) {
+      const v = data[ch*mapSize + i];
+      const n = Math.max(0, Math.min(1, (v - mn) / (mx - mn)));
+      // Clean blue-scale: white → deep blue
+      img.data[i*4]   = Math.round(255 - n * 220);
+      img.data[i*4+1] = Math.round(255 - n * 170);
+      img.data[i*4+2] = Math.round(255 - n * 40);
+      img.data[i*4+3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+    cell.appendChild(canvas);
+    grid.appendChild(cell);
+    refs.push({ cell, canvas, ctx, w, h, cellPx: canvasW / w });
+  }
+  host.appendChild(grid);
+
+  // Save pool2 refs for hover sync
+  if (hostId === 'pool2Col') {
+    pool2Refs = refs;
+    attachPool2Hover();
+  }
+}
+
+// ----- Pool2 ↔ Flatten hover sync -----
+function attachPool2Hover() {
+  if (!pool2Refs) return;
+  pool2Refs.forEach((ref, ch) => {
+    const { canvas, w, h, cellPx } = ref;
+    canvas.onmousemove = (e) => {
+      const r = canvas.getBoundingClientRect();
+      const cx = Math.floor((e.clientX - r.left) / (r.width / w));
+      const cy = Math.floor((e.clientY - r.top) / (r.height / h));
+      if (cx < 0 || cx >= w || cy < 0 || cy >= h) return;
+      highlightPool2ToFlatten(ch, cy, cx);
+    };
+    canvas.onmouseleave = () => clearHighlights();
+  });
+}
+
+let _hlMarker = null;
+function highlightPool2ToFlatten(ch, row, col) {
+  clearHighlights();
+  const idx = ch * 49 + row * 7 + col;
+  // mark flatten
+  const fCell = document.getElementById('flattenHoriz').children[idx];
+  if (fCell) fCell.classList.add('hl');
+  // marker rect over pool2 cell
+  const ref = pool2Refs[ch];
+  const r = ref.canvas.getBoundingClientRect();
+  const cw = r.width / 7, chh = r.height / 7;
+  const m = document.createElement('div');
+  m.className = 'hl-dot';
+  m.style.left = (r.left + col * cw) + 'px';
+  m.style.top  = (r.top  + row * chh) + 'px';
+  m.style.width = cw + 'px';
+  m.style.height = chh + 'px';
+  m.style.position = 'fixed';
+  document.body.appendChild(m);
+  _hlMarker = m;
+}
+function clearHighlights() {
+  document.querySelectorAll('.fcell.hl').forEach(e => e.classList.remove('hl'));
+  if (_hlMarker) { _hlMarker.remove(); _hlMarker = null; }
+}
+
+// ----- Flatten strip (horizontal, like user's reference) -----
+function renderFlattenHoriz() {
+  const host = document.getElementById('flattenHoriz');
+  host.innerHTML = '';
+  const data = activations.pool2.data;
+  const H = 7, W = 7;
+  const total = 784;
+
+  let mn = Infinity, mx = -Infinity;
+  for (let i = 0; i < data.length; i++) { if (data[i] < mn) mn = data[i]; if (data[i] > mx) mx = data[i]; }
+  if (mx <= mn) mx = mn + 1;
+
+  // build in DOM fragment
+  const frag = document.createDocumentFragment();
+  for (let i = 0; i < total; i++) {
+    const ch = Math.floor(i / (H*W));
+    const cell = document.createElement('div');
+    cell.className = 'fcell';
+    const v = data[i];
+    const n = Math.max(0, Math.min(1, (v - mn) / (mx - mn)));
+    const gray = Math.round(255 - n * 220);
+    cell.style.background = `rgb(${gray},${gray},${gray})`;
+    const bar = document.createElement('div');
+    bar.className = 'top-bar';
+    bar.style.background = CH_COLORS_16[ch];
+    cell.appendChild(bar);
+    cell.dataset.idx = i;
+    cell.title = `[${i}] ch${ch} pos(${Math.floor((i%49)/7)},${(i%49)%7}) = ${v.toFixed(3)}`;
+    frag.appendChild(cell);
+  }
+  host.appendChild(frag);
+}
+
+// ----- Hidden neurons -----
+function renderHidden() {
+  const host = document.getElementById('hiddenNeurons');
+  host.innerHTML = '';
+  const fc1 = Array.from(activations.fc1.data);
+  const mx = Math.max(...fc1.map(Math.abs), 0.001);
+  for (let i = 0; i < 64; i++) {
+    const n = document.createElement('div');
+    n.className = 'neuron';
+    const v = fc1[i];
+    const norm = Math.abs(v) / mx;
+    if (v > 0) {
+      const alpha = 0.15 + norm * 0.85;
+      n.style.background = `rgba(37,99,235,${alpha})`;
+      n.style.borderColor = `rgba(37,99,235,${Math.min(1, alpha + 0.2)})`;
+    } else {
+      const alpha = 0.08 + Math.abs(norm) * 0.3;
+      n.style.background = `rgba(217,119,87,${alpha})`;
+    }
+    n.dataset.idx = i;
+    n.title = `h${i} = ${v.toFixed(3)}`;
+    host.appendChild(n);
+  }
+}
+
+// ----- Output neurons -----
+function renderOutput() {
+  const host = document.getElementById('outputNeurons');
+  host.innerHTML = '';
+  for (let i = 0; i < 10; i++) {
+    const n = document.createElement('div');
+    n.className = 'output-neuron';
+    if (i === predicted) n.classList.add('top');
+    else if (probabilities[i] > 0.05) n.classList.add('hot');
+    n.innerHTML = `${i}<span class="oprob">${(probabilities[i]*100).toFixed(1)}%</span>`;
+    n.title = `${i}: ${(probabilities[i]*100).toFixed(3)}%`;
+    host.appendChild(n);
+  }
+}
+
+// ----- Connections: flatten -> hidden -> output -----
+function drawConnections() {
+  const svg = document.getElementById('connSvg');
+  if (!svg) return;
+  svg.innerHTML = '';
+  if (!document.getElementById('togConn').checked) return;
+  if (!activations) return;
+  if (window.innerWidth <= 768) return; // 모바일에서는 숨김
+
+  const stage = document.getElementById('fcStage');
+  const stageRect = stage.getBoundingClientRect();
+
+  // scale 보정: transform:scale()이 적용되어 있으면 getBoundingClientRect()가 축소된 값을 반환
+  // fcStage의 실제(CSS) 크기를 viewBox로 사용
+  const realW = stage.offsetWidth;
+  const realH = stage.offsetHeight;
+  const scaleX = realW / stageRect.width;
+  const scaleY = realH / stageRect.height;
+
+  svg.setAttribute('viewBox', `0 0 ${realW} ${realH}`);
+  svg.setAttribute('width', realW);
+  svg.setAttribute('height', realH);
+
+  // 좌표 변환 헬퍼: getBoundingClientRect → SVG viewBox 좌표
+  const toLocal = (rect) => ({
+    cx: ((rect.left + rect.width/2) - stageRect.left) * scaleX,
+    cy: ((rect.top + rect.height/2) - stageRect.top) * scaleY,
+    bottom: (rect.bottom - stageRect.top) * scaleY,
+    right: (rect.right - stageRect.left) * scaleX,
+    left: (rect.left - stageRect.left) * scaleX,
+  });
+
+  const flattenEl = document.getElementById('flattenHoriz');
+  const hiddenEls = Array.from(document.getElementById('hiddenNeurons').children);
+  const outputEls = Array.from(document.getElementById('outputNeurons').children);
+
+  const fc1 = Array.from(activations.fc1.data);
+  const fc1Max = Math.max(...fc1.map(Math.abs), 0.001);
+
+  // ===== Flatten -> Hidden =====
+  const fCells = Array.from(flattenEl.children);
+  const nF = fCells.length;
+
+  const sampleStride = 14;
+  const samplePoints = [];
+  for (let i = 0; i < nF; i += sampleStride) {
+    const r = fCells[i].getBoundingClientRect();
+    const loc = toLocal(r);
+    samplePoints.push({ x: loc.cx, y: loc.bottom, idx: i });
+  }
+
+  for (let hi = 0; hi < 64; hi++) {
+    if (hi >= hiddenEls.length) break;
+    const hr = hiddenEls[hi].getBoundingClientRect();
+    const loc = toLocal(hr);
+    const v = fc1[hi];
+    const norm = Math.abs(v) / fc1Max;
+    if (norm < 0.05) continue;
+    const strokeColor = v > 0 ? `rgba(37,99,235,${norm*0.22})` : `rgba(217,119,87,${norm*0.22})`;
+
+    for (const p of samplePoints) {
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      line.setAttribute('x1', p.x);
+      line.setAttribute('y1', p.y);
+      line.setAttribute('x2', loc.cx);
+      line.setAttribute('y2', loc.cy);
+      line.setAttribute('stroke', strokeColor);
+      line.setAttribute('stroke-width', 0.4 + norm * 0.5);
+      svg.appendChild(line);
+    }
+  }
+
+  // ===== Hidden -> Output =====
+  for (let hi = 0; hi < 64; hi++) {
+    if (hi >= hiddenEls.length) break;
+    const hr = hiddenEls[hi].getBoundingClientRect();
+    const hLoc = toLocal(hr);
+    const v = fc1[hi];
+    const norm = Math.abs(v) / fc1Max;
+    if (norm < 0.03) continue;
+
+    for (let oi = 0; oi < 10; oi++) {
+      if (oi >= outputEls.length) break;
+      const orec = outputEls[oi].getBoundingClientRect();
+      const oLoc = toLocal(orec);
+      const isPred = oi === predicted;
+      const alpha = norm * (isPred ? 0.55 : 0.08);
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      line.setAttribute('x1', hLoc.right);
+      line.setAttribute('y1', hLoc.cy);
+      line.setAttribute('x2', oLoc.left);
+      line.setAttribute('y2', oLoc.cy);
+      line.setAttribute('stroke', isPred ? `rgba(22,163,74,${alpha})` : `rgba(150,150,150,${alpha})`);
+      line.setAttribute('stroke-width', isPred ? norm * 1.3 : norm * 0.4);
+      svg.appendChild(line);
+    }
+  }
+}
+
+// ================================================================
+//  Presets
+// ================================================================
+const PRESET_LABELS = [0,1,2,3,4,5,6,7,8,9];
+
+function setupPresets() {
+  const grid = document.getElementById('presetGrid');
+  grid.innerHTML = '';
+  for (const d of PRESET_LABELS) {
+    const btn = document.createElement('button');
+    btn.className = 'preset';
+    const canvas = document.createElement('canvas');
+    canvas.width = 28; canvas.height = 28;
+    renderDigitOnCanvas(canvas, d);
+    btn.appendChild(canvas);
+    btn.title = `${d} 불러오기`;
+    btn.addEventListener('click', () => loadPresetAndRecognize(d));
+    grid.appendChild(btn);
+  }
+}
+
+function renderDigitOnCanvas(canvas, digit) {
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.fillStyle = '#000';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.font = `bold ${canvas.width*0.78}px "SF Pro Display", -apple-system, sans-serif`;
+  ctx.fillText(digit, canvas.width/2, canvas.height/2 + 1);
+}
+
+async function loadPresetAndRecognize(digit) {
+  const canvas = document.getElementById('drawCanvas');
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, 216, 216);
+  ctx.fillStyle = '#000';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  const fonts = [
+    '"Chalkboard SE","SF Pro Display",serif',
+    '"Marker Felt","SF Pro Display",sans-serif',
+    '"SF Pro Display",-apple-system,sans-serif',
+  ];
+  ctx.font = `bold 180px ${fonts[digit % fonts.length]}`;
+  ctx.fillText(digit, 108, 114);
+  await recognize();
+}
+
+// ================================================================
+//  Flatten unroll animation
+// ================================================================
+let flattenAnimating = false;
+async function playFlattenAnimation() {
+  if (flattenAnimating || !activations || !pool2Refs) return;
+  flattenAnimating = true;
+  const btn = document.getElementById('flattenPlayBtn');
+  btn.disabled = true;
+  btn.textContent = '재생 중…';
+
+  const flattenEl = document.getElementById('flattenHoriz');
+  const fCells = Array.from(flattenEl.children);
+  // hide flatten cells initially
+  fCells.forEach(c => c.style.opacity = '0.08');
+
+  const data = activations.pool2.data;
+  let mn = Infinity, mx = -Infinity;
+  for (let i = 0; i < data.length; i++) { if (data[i] < mn) mn = data[i]; if (data[i] > mx) mx = data[i]; }
+  if (mx <= mn) mx = mn + 1;
+
+  // Animate each channel, row by row
+  for (let ch = 0; ch < 16; ch++) {
+    const ref = pool2Refs[ch];
+    const canvasRect = ref.canvas.getBoundingClientRect();
+    const cw = canvasRect.width / 7, chh = canvasRect.height / 7;
+
+    for (let row = 0; row < 7; row++) {
+      const flies = [];
+      for (let col = 0; col < 7; col++) {
+        const idx = ch * 49 + row * 7 + col;
+        const srcX = canvasRect.left + col * cw + cw/2;
+        const srcY = canvasRect.top  + row * chh + chh/2;
+        const fRect = fCells[idx].getBoundingClientRect();
+        const dstX = fRect.left + fRect.width/2;
+        const dstY = fRect.top + fRect.height/2;
+
+        const dot = document.createElement('div');
+        dot.className = 'fly-dot';
+        const v = data[idx];
+        const n = Math.max(0, Math.min(1, (v - mn) / (mx - mn)));
+        const gray = Math.round(255 - n * 220);
+        dot.style.background = `rgb(${gray},${gray},${gray})`;
+        dot.style.border = `2px solid ${CH_COLORS_16[ch]}`;
+        dot.style.left = srcX + 'px';
+        dot.style.top = srcY + 'px';
+        dot.style.transform = 'translate(-50%,-50%)';
+        dot.style.transition = 'left .45s cubic-bezier(.4,.1,.3,1), top .45s cubic-bezier(.4,.1,.3,1), opacity .3s';
+        document.body.appendChild(dot);
+        flies.push({ dot, dstX, dstY, idx });
+      }
+      // trigger motion
+      await new Promise(r => requestAnimationFrame(r));
+      flies.forEach(f => { f.dot.style.left = f.dstX + 'px'; f.dot.style.top = f.dstY + 'px'; });
+      await sleep(380);
+      // reveal flatten cells, remove flies
+      flies.forEach(f => {
+        fCells[f.idx].style.opacity = '1';
+        f.dot.style.opacity = '0';
+        setTimeout(() => f.dot.remove(), 200);
+      });
+      await sleep(30);
+    }
+  }
+  fCells.forEach(c => c.style.opacity = '1');
+  btn.disabled = false;
+  btn.textContent = '▶ 펼치기 애니메이션';
+  flattenAnimating = false;
+}
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ================================================================
+//  Buttons / toggles
+// ================================================================
+function setupButtons() {
+  document.getElementById('btnClear').addEventListener('click', () => {
+    clearDraw();
+    document.getElementById('predDigit').textContent = '–';
+    document.getElementById('predConf').textContent = '숫자를 그려주세요';
+    document.getElementById('probs').innerHTML = '';
+  });
+  document.getElementById('btnRecognize').addEventListener('click', recognize);
+  document.getElementById('togValues').addEventListener('change', () => {
+    if (activations) renderInput();
+  });
+  document.getElementById('togConn').addEventListener('change', drawConnections);
+  document.getElementById('flattenPlayBtn').addEventListener('click', playFlattenAnimation);
+}
+</script>
+
 </body>
 </html>
